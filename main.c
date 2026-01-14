@@ -10,57 +10,39 @@
 #include <string.h>
 #include <getopt.h>
 #include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
 
+// UART config default
 #define DEFAULT_DEV1        "/dev/ttyAS7"
 #define DEFAULT_DEV2        "/dev/ttyAS8"
-#define DEFAULT_MODE        'write'
 #define DEFAULT_BAUDRATE    115200
-#define DEFAULT_SEND_CNT    100
-#define DEFAULT_DATA_LEN    10
 #define DEFAULT_DATABIT     8
 #define DEFAULT_STOPBIT     1
 #define DEFAULT_PARITY      'N'
 #define DEFAULT_FLOW_CTRL   0
 
-static void get_rand_str(char buf[], size_t length);
-static void print_usage(const char *prog_name);
+// TCP config default
+#define TCP_PORT            8888
+#define BUF_SIZE            1024
+#define MAX_CLIENT_NUM      5   
+#define LISTEN_BACKLOG      5   
+
+// Global share resource
+int g_tcp_client_fd = -1;
+int g_uart_fd[2] = {-1, -1};
+pthread_mutex_t g_tcp_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Function declare
 static speed_t baudrate2bps(int baudrate);
-static int get_transfer_delay(int databit, int stopbit, int baudrate, int data_len);
 static int uart_set_attr(int fd, speed_t speed, int databit, int stopbit, char parity, int flow_ctrl);
 static int uart_open_device(const char *dev_path, speed_t speed, int databit, int stopbit, char parity, int flow_ctrl);
-
-
-
-void get_rand_str(char buf[], size_t length)
-{
-    char *charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-    size_t charset_len = strlen(charset);
-    struct timespec seed_time = { 0, 0 };
-
-    clock_gettime(CLOCK_REALTIME, &seed_time);
-    srand((unsigned int)(seed_time.tv_sec + seed_time.tv_nsec));
-    
-    for(size_t i = 0; i < length; i++) {
-        buf[i] = charset[(rand() % charset_len)];
-    }
-    buf[length] = '\0';
-}
-
-void print_usage(const char *prog_name)
-{
-    printf("Usage:%s [Options]\n",prog_name);
-    printf("Options:\n");
-    printf("  -1 <dev>    Set UART device 1 path, default: %s\n", DEFAULT_DEV1);
-    printf("  -2 <dev>    Set UART device 2 path, default: %s\n", DEFAULT_DEV2);
-    printf("  -b  <rate>   Set baudrate, support:50-1000000, default: %d\n", DEFAULT_BAUDRATE);
-    printf("  -n  <count>  Set total send round count, default: %d\n", DEFAULT_SEND_CNT);
-    printf("  -l  <len>    Set single send data length(byte), default: %d\n", DEFAULT_DATA_LEN);
-    printf("  -D <bit>    Set data bit (5/6/7/8), default: %d\n", DEFAULT_DATABIT);
-    printf("  -S <bit>    Set stop bit (1/2), default: %d\n", DEFAULT_STOPBIT);
-    printf("  -p  <parity> Set parity (N:None, O:Odd, E:Even), default: %c\n", DEFAULT_PARITY);
-    printf("  -f  <ctrl>   Set hardware flow ctrl (0:off,1:on), default: %d\n", DEFAULT_FLOW_CTRL);
-    printf("  -h           Show this help message\n");
-}
+void *uart_read_thread(void *arg);
+void *tcp_server_thread(void *arg);
+int tcp_send_data(const char *uart_name, const char *data, int len);
+void parse_tcp_data(char *buf, int len);
 
 speed_t baudrate2bps(int baudrate)
 {
@@ -91,12 +73,6 @@ speed_t baudrate2bps(int baudrate)
         case 1000000:   return B1000000;
         default:        return B115200;
     }
-}
-
-int get_transfer_delay(int databit, int stopbit, int baudrate, int data_len)
-{
-    float delay_us = (1.0f / baudrate) * 1000000 * (1 + databit + stopbit) * data_len;
-    return (int)delay_us + 1000;
 }
 
 int uart_set_attr(int fd, speed_t speed, int databit, int stopbit, char parity, int flow_ctrl)
@@ -178,157 +154,224 @@ int uart_open_device(const char *dev_path, speed_t speed, int databit, int stopb
     return fd;
 }
 
-int main(int argc, char *argv[])
+void *uart_read_thread(void *arg)
 {
-    char *dev1 = DEFAULT_DEV1;
-    char *dev2 = DEFAULT_DEV2;
-    int baudrate = DEFAULT_BAUDRATE;
-    int send_count = DEFAULT_SEND_CNT;
-    int data_length = DEFAULT_DATA_LEN;
-    int databit = DEFAULT_DATABIT;
-    int stopbit = DEFAULT_STOPBIT;
-    char parity = DEFAULT_PARITY;
-    int flow_ctrl = DEFAULT_FLOW_CTRL;
+    int uart_idx = *(int *)arg;
+    char *uart_name = (uart_idx == 0) ? DEFAULT_DEV1 : DEFAULT_DEV2;
+    int fd = g_uart_fd[uart_idx];
+    char buf[BUF_SIZE] = {0};
 
-    int opt = 0;
-    const char *opt_string = "1:2:b:n:l:D:S:p:f:h";
-    while ((opt = getopt(argc, argv, opt_string)) != -1)
+    printf("UART read thread start: %s\n", uart_name);
+
+    while (1)
     {
-        switch (opt)
+        ssize_t len = read(fd, buf, BUF_SIZE-1);
+        if (len > 0)
         {
-            case '1': dev1 = optarg; break;          
-            case '2': dev2 = optarg; break;          
-            case 'b':  baudrate = atoi(optarg); break;
-            case 'n':  send_count = atoi(optarg); break;
-            case 'l':  data_length = atoi(optarg); break;
-            case 'D': databit = atoi(optarg); break; 
-            case 'S': stopbit = atoi(optarg); break; 
-            case 'p':  parity = optarg[0]; break;
-            case 'f':  flow_ctrl = atoi(optarg); break;
-            case 'h':  print_usage(argv[0]); return 0;
-            default:   print_usage(argv[0]); return -1;
+            buf[len] = '\0';
+            char send_buf[BUF_SIZE + 32] = {0};
+            snprintf(send_buf, sizeof(send_buf), "[%s] %s", uart_name, buf);
+            tcp_send_data(uart_name, send_buf, strlen(send_buf));
+            memset(buf, 0, sizeof(buf));
         }
-    }
-
-    if(send_count <=0 || data_length <=0 || databit<5||databit>8 || (stopbit!=1&&stopbit!=2) || (parity!='N'&&parity!='O'&&parity!='E'))
-    {
-        fprintf(stderr, "Invalid parameter value,please check!\n");
-        print_usage(argv[0]);
-        return -1;
-    }
-
-    speed_t speed = baudrate2bps(baudrate);
-    int fd_uart1 = uart_open_device(dev1, speed, databit, stopbit, parity, flow_ctrl);
-    int fd_uart2 = uart_open_device(dev2, speed, databit, stopbit, parity, flow_ctrl);
-
-    if (fd_uart1 < 0 || fd_uart2 < 0)
-    {
-        fprintf(stderr, "UART device init failed!\n");
-        if(fd_uart1 > 0) close(fd_uart1);
-        if(fd_uart2 > 0) close(fd_uart2);
-        return -1;
-    }
-
-    char *tx_buffer = (char *)malloc(data_length + 1);
-    char *rx_buffer = (char *)malloc(data_length + 1);
-    if(tx_buffer == NULL || rx_buffer == NULL)
-    {
-        perror("malloc buffer failed");
-        close(fd_uart1);
-        close(fd_uart2);
-        return -1;
-    }
-
-    printf("=============================================\n");
-    printf("UART Loop Test Start, Config Info:\n");
-    printf("UART1: %s, UART2: %s\n", dev1, dev2);
-    printf("Baudrate: %d, Data bit: %d, Stop bit: %d\n", baudrate, databit, stopbit);
-    printf("Parity: %c, Flow Ctrl: %s\n", parity, flow_ctrl?"ON":"OFF");
-    printf("Data Length: %d byte, Total Round: %d\n", data_length, send_count);
-    printf("=============================================\n\n");
-
-    for (int round = 1; round <= send_count; round++)
-    {
-        printf("=== Round %d / %d ===\n", round, send_count);
-        memset(tx_buffer, 0, data_length + 1);
-        memset(rx_buffer, 0, data_length + 1);
-
-        get_rand_str(tx_buffer, data_length);
-        printf("[%s] TX: %s\n", dev1, tx_buffer);
-
-        size_t write_len = 0;
-        while(write_len < data_length)
+        else if (len < 0 && errno != EAGAIN)
         {
-            ssize_t ret = write(fd_uart1, tx_buffer + write_len, data_length - write_len);
-            if (ret < 0)
-            {
-                perror("uart1 write error");
-                break;
-            }
-            write_len += ret;
+            perror("UART read error");
+            break;
         }
-        usleep(get_transfer_delay(databit, stopbit, baudrate, data_length));
-        
-        size_t read_len = 0;
-        while(read_len < data_length)
-        {
-            ssize_t ret = read(fd_uart2, rx_buffer + read_len, data_length - read_len);
-            if(ret < 0)
-            {
-                perror("uart2 read error");
-                break;
-            }
-            read_len += ret;
-        }
-        printf("[%s] RX: %s\n", dev2, rx_buffer);
-
-        sleep(1);
-
-        memset(tx_buffer, 0, data_length + 1);
-        memset(rx_buffer, 0, data_length + 1);
-        get_rand_str(tx_buffer, data_length);
-        printf("[%s] TX: %s\n", dev2, tx_buffer);
-
-        write_len = 0;
-        while(write_len < data_length)
-        {
-            ssize_t ret = write(fd_uart2, tx_buffer + write_len, data_length - write_len);
-            if(ret < 0)
-            {
-                perror("uart2 write error");
-                break;
-            }
-            write_len += ret;
-        }
-        usleep(get_transfer_delay(databit, stopbit, baudrate, data_length));
-
-        read_len = 0;
-        while(read_len < data_length)
-        {
-            ssize_t ret = read(fd_uart1, rx_buffer + read_len, data_length - read_len);
-            if(ret < 0)
-            {
-                perror("uart1 read error");
-                break;
-            }
-            read_len += ret;
-        }
-        printf("[%s] RX: %s\n", dev1, rx_buffer);
-        printf("\n");
-        sleep(1);
+        usleep(1000);
     }
-    
-    free(tx_buffer);
-    free(rx_buffer);
-    close(fd_uart1);
-    close(fd_uart2);
-
-    printf("=============================================\n");
-    printf("UART Loop Test Completed Successfully!\n");
-    printf("=============================================\n");
-    return 0;
-
+    pthread_exit(NULL);
 }
 
+int tcp_send_data(const char *uart_name, const char *data, int len)
+{
+    pthread_mutex_lock(&g_tcp_mutex);
+    if (g_tcp_client_fd > 0)
+    {
+        ssize_t ret = send(g_tcp_client_fd, data, len, 0);
+        if (ret < 0)
+        {
+            perror("TCP send error");
+            g_tcp_client_fd = -1;
+        }
+        pthread_mutex_unlock(&g_tcp_mutex);
+        return ret;
+    }
+    pthread_mutex_unlock(&g_tcp_mutex);
+    return -1;
+}
 
+void parse_tcp_data(char *buf, int len)
+{
+    int uart_idx = 0;
+    char data[BUF_SIZE] = {0};
 
+    if (buf[0] == '[' && strstr(buf, "]") != NULL)
+    {
+        char *end = strstr(buf, "]");
+        char uart_dev[32] = {0};
+        strncpy(uart_dev, buf+1, end - buf -1);
+        
+        if (strcmp(uart_dev, "ttyAS8") == 0)
+        {
+            uart_idx = 1;
+        }
+        else if (strcmp(uart_dev, "ttyAS7") != 0)
+        {
+            printf("Invalid UART device: %s, use default ttyAS7\n", uart_dev);
+            uart_idx = 0;
+        }
+        strncpy(data, end+1, len - (end - buf +1));
+    }
+    else
+    {
+        strncpy(data, buf, len);
+    }
+
+    if (g_uart_fd[uart_idx] > 0)
+    {
+        ssize_t ret = write(g_uart_fd[uart_idx], data, strlen(data));
+        if (ret < 0)
+        {
+            perror("UART write error");
+        }
+        else
+        {
+            printf("Send to %s: %s\n", (uart_idx==0?DEFAULT_DEV1:DEFAULT_DEV2), data);
+        }
+    }
+}
+
+void *tcp_server_thread(void *arg)
+{
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0)
+    {
+        perror("TCP socket create failed");
+        pthread_exit(NULL);
+    }
+
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(TCP_PORT);
+
+    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+    {
+        perror("TCP bind failed");
+        close(server_fd);
+        pthread_exit(NULL);
+    }
+
+    if (listen(server_fd, LISTEN_BACKLOG) < 0)
+    {
+        perror("TCP listen failed");
+        close(server_fd);
+        pthread_exit(NULL);
+    }
+
+    printf("TCP server start, listen port: %d\n", TCP_PORT);
+
+    while (1)
+    {
+        struct sockaddr_in client_addr;
+        
+        socklen_t client_len = sizeof(struct sockaddr_in);
+        int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+        
+        if (client_fd < 0)
+        {
+            perror("TCP accept failed");
+            continue;
+        }
+
+        pthread_mutex_lock(&g_tcp_mutex);
+        if (g_tcp_client_fd > 0)
+        {
+            close(g_tcp_client_fd);
+            printf("Old client disconnected\n");
+        }
+        g_tcp_client_fd = client_fd;
+        pthread_mutex_unlock(&g_tcp_mutex);
+
+        printf("Client connected: %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+        char buf[BUF_SIZE] = {0};
+        while (1)
+        {
+            ssize_t len = recv(g_tcp_client_fd, buf, BUF_SIZE-1, 0);
+            if (len <= 0)
+            {
+                perror("TCP recv error or client disconnect");
+                pthread_mutex_lock(&g_tcp_mutex);
+                g_tcp_client_fd = -1;
+                pthread_mutex_unlock(&g_tcp_mutex);
+                close(client_fd);
+                memset(buf, 0, sizeof(buf));
+                break;
+            }
+            buf[len] = '\0';
+            printf("Recv from TCP: %s\n", buf);
+            parse_tcp_data(buf, len);
+            memset(buf, 0, sizeof(buf));
+        }
+    }
+    close(server_fd);
+    pthread_exit(NULL);
+}
+
+int main(int argc, char *argv[])
+{
+    speed_t speed = baudrate2bps(DEFAULT_BAUDRATE);
+    g_uart_fd[0] = uart_open_device(DEFAULT_DEV1, speed, DEFAULT_DATABIT, DEFAULT_STOPBIT, DEFAULT_PARITY, DEFAULT_FLOW_CTRL);
+    g_uart_fd[1] = uart_open_device(DEFAULT_DEV2, speed, DEFAULT_DATABIT, DEFAULT_STOPBIT, DEFAULT_PARITY, DEFAULT_FLOW_CTRL);
+    
+    if (g_uart_fd[0] < 0 || g_uart_fd[1] < 0)
+    {
+        fprintf(stderr, "UART init failed\n");
+        if (g_uart_fd[0] > 0) close(g_uart_fd[0]);
+        if (g_uart_fd[1] > 0) close(g_uart_fd[1]);
+        return -1;
+    }
+
+    pthread_t uart_thread[2];
+    int uart_idx[2] = {0, 1};
+    for (int i = 0; i < 2; i++)
+    {
+        if (pthread_create(&uart_thread[i], NULL, uart_read_thread, &uart_idx[i]) != 0)
+        {
+            perror("Create uart thread failed");
+            return -1;
+        }
+    }
+
+    pthread_t tcp_thread;
+    if (pthread_create(&tcp_thread, NULL, tcp_server_thread, NULL) != 0)
+    {
+        perror("Create TCP thread failed");
+        return -1;
+    }
+
+    printf("UART<->TCP forward start successfully!\n");
+    printf("TCP server: 192.168.1.232:%d\n", TCP_PORT);
+    printf("UART1: %s, UART2: %s\n", DEFAULT_DEV1, DEFAULT_DEV2);
+    printf("Usage:\n");
+    printf("  Send to UART: [ttyAS7]data or [ttyAS8]data (default ttyAS7 if no prefix)\n");
+    printf("  UART data will be forward to TCP with prefix [ttyASx]\n");
+
+    pthread_join(tcp_thread, NULL);
+    for (int i = 0; i < 2; i++)
+    {
+        pthread_join(uart_thread[i], NULL);
+    }
+
+    close(g_uart_fd[0]);
+    close(g_uart_fd[1]);
+    pthread_mutex_destroy(&g_tcp_mutex);
+    return 0;
+}
