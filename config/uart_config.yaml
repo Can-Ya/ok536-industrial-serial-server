@@ -1,0 +1,155 @@
+---
+uart_list:
+  - idx: 0
+    dev_path: "/dev/ttyAS0"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 1
+    dev_path: "/dev/ttyAS1"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 2
+    dev_path: "/dev/ttyAS2"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 3
+    dev_path: "/dev/ttyAS3"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: true
+    modbus_enable: false
+  - idx: 4
+    dev_path: "/dev/ttyAS4"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 5
+    dev_path: "/dev/ttyAS5"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: true
+    modbus_enable: false
+  - idx: 6
+    dev_path: "/dev/ttyAS6"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 7
+    dev_path: "/dev/ttyAS7"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: true
+    modbus_enable: true
+  - idx: 8
+    dev_path: "/dev/ttyAS8"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: true
+    modbus_enable: true
+  - idx: 9
+    dev_path: "/dev/ttyAS9"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 10
+    dev_path: "/dev/ttyAS10"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 11
+    dev_path: "/dev/ttyAS11"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: true
+    modbus_enable: false
+  - idx: 12
+    dev_path: "/dev/ttyAS12"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: true
+    modbus_enable: false
+  - idx: 13
+    dev_path: "/dev/ttyAS13"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 14
+    dev_path: "/dev/ttyAS14"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 15
+    dev_path: "/dev/ttyAS15"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
+  - idx: 16
+    dev_path: "/dev/ttyAS16"
+    baudrate: 115200
+    databit: 8
+    stopbit: 1
+    parity: "N"
+    flow_ctrl: 0
+    enable: false
+    modbus_enable: false
