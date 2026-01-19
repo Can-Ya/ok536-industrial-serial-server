@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "unistd.h": "c",
+        "net_mgr.h": "c"
+    }
+}

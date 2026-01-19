@@ -1,6 +1,10 @@
 #include "net_mgr.h"
 #include <errno.h>
 
+/**
+ * Initialize TCP client structure
+ * @param client: Pointer to TcpClient structure
+ */
 static void tcp_client_init(TcpClient* client) {
     if (!client) return;
     memset(client, 0, sizeof(TcpClient));
@@ -9,6 +13,10 @@ static void tcp_client_init(TcpClient* client) {
     pthread_mutex_init(&client->mutex, NULL);
 }
 
+/**
+ * Destroy TCP client structure and release resources
+ * @param client: Pointer to TcpClient structure
+ */
 static void tcp_client_destroy(TcpClient* client) {
     if (!client) return;
     if (client->fd > 0) {
@@ -17,18 +25,23 @@ static void tcp_client_destroy(TcpClient* client) {
     pthread_mutex_destroy(&client->mutex);
 }
 
+/**
+ * TCP server thread function (handle client connections)
+ * @param arg: Pointer to NetMgr instance
+ * @return NULL on exit
+ */
 static void* tcp_server_thread(void* arg) {
     NetMgr* mgr = (NetMgr*)arg;
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
 
-    printf("TCP server thread start, listen port: %d\n", TCP_PORT);
+    printf("[INFO] TCP server thread start, listen port: %d\n", TCP_PORT);
 
     while (1) {
         int client_fd = accept(mgr->server_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) {
             if (errno == EINTR) continue;
-            perror("TCP accept failed");
+            perror("[ERROR] TCP accept failed");
             break;
         }
 
@@ -44,7 +57,7 @@ static void* tcp_server_thread(void* arg) {
 
         if (client_idx == -1) {
             close(client_fd);
-            fprintf(stderr, "TCP client max num reacher, reject new connection\n");
+            fprintf(stderr, "[WARN] TCP client max num reacher, reject new connection\n");
             continue;
         }
 
@@ -60,11 +73,17 @@ static void* tcp_server_thread(void* arg) {
         client->tx_bytes = 0;
         pthread_mutex_unlock(&client->mutex);
 
-        printf("TCP client connected: %s:%d (idx: %d)\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), client_idx);
+        printf("[INFO] TCP client connected: %s:%d (idx: %d)\n", 
+                inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), client_idx);
     }
     return NULL;
 }
 
+/**
+ * TCP client thread function (connect to server)
+ * @param arg: Pointer to NetMgr instance
+ * @return NULL on exit
+ */
 static void* tcp_client_thread(void* arg)
 {
     NetMgr* mgr = (NetMgr*)arg;
@@ -74,7 +93,7 @@ static void* tcp_client_thread(void* arg)
     server_addr.sin_port = htons(TCP_PORT);
 
     if (inet_pton(AF_INET, (char*)arg + sizeof(NetMgr*), &server_addr.sin_addr) <= 0) {
-        perror("Invalid server IP");
+        perror("[ERROR] Invalid server IP");
         return NULL;
     }
 
@@ -83,22 +102,22 @@ static void* tcp_client_thread(void* arg)
         if (mgr->client_fd < 0 || !mgr->client_fd) {
             mgr->client_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (mgr->client_fd < 0) {
-                perror("TCP client socket create failed");
+                perror("[ERROR] TCP client socket create failed");
                 pthread_mutex_unlock(&mgr->mutex);
                 sleep(1);
                 continue;
             }
 
-            printf("TCP client connecting to %s:%d...\n", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
+            printf("[INFO] TCP client connecting to %s:%d...\n", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
             if (connect(mgr->client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-                perror("TCP client connerc failed");
+                perror("[ERROR] TCP client connerc failed");
                 close(mgr->client_fd);
                 mgr->client_fd = -1;
                 pthread_mutex_unlock(&mgr->mutex);
                 sleep(3);
                 continue;
             }
-            printf("TCP client connected to server\n");
+            printf("[INFO] TCP client connected to server\n");
         }
         pthread_mutex_unlock(&mgr->mutex);
         sleep(1);
@@ -106,16 +125,27 @@ static void* tcp_client_thread(void* arg)
     return NULL;
 }
 
-// UDP线程函数
+/**
+ * UDP thread function (reserved for extension)
+ * @param arg: Pointer to NetMgr instance
+ * @return NULL on exit
+ */
 static void* udp_thread(void* arg) {
-    // 暂留空实现，步骤3可扩展
+    // temple NULL
     return NULL;
 }
 
+/**
+ * Initialize network manager
+ * @param mode: Network mode (TCP_SERVER/TCP_CLIENT/UDP)
+ * @param server_ip: Server IP (only for TCP_CLIENT mode)
+ * @param port: Network port (0 for default port)
+ * @return Pointer to NetMgr instance on success, NULL on failure
+ */
 NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
     NetMgr* mgr = (NetMgr*)malloc(sizeof(NetMgr));
     if (!mgr) {
-        perror("Malloc NetMgr failed");
+        perror("[ERROR] Malloc NetMgr failed");
         return NULL;
     }
     memset(mgr, 0, sizeof(NetMgr));
@@ -131,7 +161,7 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
         case NET_MODE_TCP_SERVER:
             mgr->server_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (mgr->server_fd < 0) {
-                perror("TCP server socket create failed");
+                perror("[ERROR] TCP server socket create failed");
                 free(mgr);
                 return NULL;
             }
@@ -144,21 +174,21 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
             server_addr.sin_port = htons(port > 0 ? port : TCP_PORT);
 
             if (bind(mgr->server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-                perror("TCP server bind failed");
+                perror("[ERROR] TCP server bind failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
             if (listen(mgr->server_fd, LISTEN_BACKLOG) < 0) {
-                perror("TCP server listen failed");
+                perror("[ERROR] TCP server listen failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
             if (pthread_create(&mgr->net_thread, NULL, tcp_server_thread, mgr) != 0) {
-                perror("Create TCP server thread failed");
+                perror("[ERROR] Create TCP server thread failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
@@ -167,7 +197,7 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
 
         case NET_MODE_TCP_CLIENT: 
             if (pthread_create(&mgr->net_thread, NULL, tcp_client_thread, mgr) != 0) {
-                perror("Create TCP client thread failed");
+                perror("[ERROR] Create TCP client thread failed");
                 free(mgr);
                 return NULL;
             }
@@ -176,13 +206,12 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
         case NET_MODE_UDP: 
             mgr->server_fd = socket(AF_INET, SOCK_DGRAM, 0);
             if (mgr->server_fd < 0) {
-                perror("UDP socket create failed");
+                perror("[ERROR] UDP socket create failed");
                 free(mgr);
                 return NULL;
             }
             setsockopt(mgr->server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-            // 绑定地址
             struct sockaddr_in udp_addr;
             memset(&udp_addr, 0, sizeof(udp_addr));
             udp_addr.sin_family = AF_INET;
@@ -190,15 +219,14 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
             udp_addr.sin_port = htons(port > 0 ? port : UDP_PORT);
 
             if (bind(mgr->server_fd, (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
-                perror("UDP bind failed");
+                perror("[ERROR] UDP bind failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
-            // 创建UDP线程
             if (pthread_create(&mgr->net_thread, NULL, udp_thread, mgr) != 0) {
-                perror("Create UDP thread failed");
+                perror("[ERROR] Create UDP thread failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
@@ -213,6 +241,10 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
     return mgr;
 }
 
+/**
+ * Destroy network manager and release resources
+ * @param mgr: Pointer to NetMgr instance
+ */
 void net_mgr_destroy(NetMgr* mgr) 
 {
     if (!mgr) return;
@@ -237,7 +269,14 @@ void net_mgr_destroy(NetMgr* mgr)
     free(mgr);
 }
 
-int net_mgr_broadcast_tcp(NetMgr* mgr, const char* data, int len)
+/**
+ * Broadcast TCP data to all connected clients
+ * @param mgr: Pointer to NetMgr instance
+ * @param data: Data buffer to send
+ * @param len: Length of data buffer
+ * @return Number of clients successfully sent to
+ */
+int net_mgr_broadcast_tcp(NetMgr* mgr, const uint8_t* data, int len)
 {
     if (!mgr || !data || len <= 0) return -1;
 
@@ -248,7 +287,7 @@ int net_mgr_broadcast_tcp(NetMgr* mgr, const char* data, int len)
         if (!client->connected || client->fd < 0) continue;
 
         pthread_mutex_lock(&client->mutex);
-        ssize_t ret = send(client->fd, data, len, 0);
+        ssize_t ret = send(client->fd, (const void*)data, len, 0);
         if (ret > 0) {
             client->tx_bytes += ret;
             send_count++;
@@ -264,7 +303,15 @@ int net_mgr_broadcast_tcp(NetMgr* mgr, const char* data, int len)
     return send_count;
 }
 
-int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const char* data, int len) {
+/**
+ * Send TCP data to specified client
+ * @param mgr: Pointer to NetMgr instance
+ * @param client_idx: Client index (0 ~ MAX_CLIENT_NUM-1)
+ * @param data: Data buffer to send
+ * @param len: Length of data buffer
+ * @return Number of bytes sent on success, -1 on failure
+ */
+int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const uint8_t* data, int len) {
     if (!mgr || client_idx < 0 || client_idx >= MAX_CLIENT_NUM || !data || len <= 0) {
         return -1;
     }
@@ -275,10 +322,11 @@ int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const char* data, int len) {
     pthread_mutex_lock(&client->mutex);
     if (!client->connected || client->fd < 0) {
         pthread_mutex_unlock(&client->mutex);
+        pthread_mutex_unlock(&mgr->mutex);
         return -1;
     }
 
-    ssize_t ret = send(client->fd, data, len, 0);
+    ssize_t ret = send(client->fd, (const void*)data, len, 0);
     if (ret > 0) {
         client->tx_bytes += ret;
     } else {
@@ -292,7 +340,15 @@ int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const char* data, int len) {
     return ret;
 }
 
-int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, char* buf, int len)
+/**
+ * Receive TCP data from specified client
+ * @param mgr: Pointer to NetMgr instance
+ * @param client_idx: Client index (0 ~ MAX_CLIENT_NUM-1)
+ * @param buf: Output data buffer
+ * @param len: Length of output buffer
+ * @return Number of bytes received on success, 0 on timeout, -1 on failure
+ */
+int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, uint8_t* buf, int len)
 {
     if (!mgr || client_idx < 0 || client_idx >= MAX_CLIENT_NUM || !buf || len <= 0) {
         return -1;
@@ -305,10 +361,10 @@ int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, char* buf, int len)
         return -1;
     }
 
-    struct timeval tv = {2, 0};
+    struct timeval tv = {1, 0};
     setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    ssize_t ret = recv(client->fd, buf, len - 1, 0);
+    ssize_t ret = recv(client->fd, (void*)buf, len - 1, 0);
     if (ret > 0) {
         client->rx_bytes += ret;
         buf[ret] = '\0';
@@ -330,6 +386,15 @@ int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, char* buf, int len)
     return ret;
 }
 
+/**
+ * Send UDP data to specified IP/port
+ * @param mgr: Pointer to NetMgr instance
+ * @param ip: Destination IP address
+ * @param port: Destination port
+ * @param data: Data buffer to send
+ * @param len: Length of data buffer
+ * @return Number of bytes sent on success, -1 on failure
+ */
 int net_mgr_send_udp(NetMgr* mgr, const char* ip, int port, const char* data, int len) {
     if (!mgr || mgr->mode != NET_MODE_UDP || !ip || port <= 0 || !data || len <= 0) {
         return -1;
@@ -347,6 +412,15 @@ int net_mgr_send_udp(NetMgr* mgr, const char* ip, int port, const char* data, in
     return ret;
 }
 
+/**
+ * Receive UDP data and get source IP/port
+ * @param mgr: Pointer to NetMgr instance
+ * @param buf: Output data buffer
+ * @param len: Length of output buffer
+ * @param src_ip: Output source IP address
+ * @param src_port: Output source port
+ * @return Number of bytes received on success, -1 on failure
+ */
 int net_mgr_recv_udp(NetMgr* mgr, char* buf, int len, char* src_ip, int* src_port) {
     if (!mgr || mgr->mode != NET_MODE_UDP || !buf || len <= 0 || !src_ip || !src_port) {
         return -1;

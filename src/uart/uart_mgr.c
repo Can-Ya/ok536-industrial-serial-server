@@ -1,5 +1,10 @@
 #include "uart_mgr.h"
 
+/**
+ * Convert baudrate value to corresponding speed_t constant
+ * @param baudrate: Input baudrate value (e.g. 9600, 115200)
+ * @return Corresponding speed_t constant (Bxxx)
+ */
 static speed_t baudrate2bps(int baudrate)
 {
     switch (baudrate)
@@ -31,6 +36,12 @@ static speed_t baudrate2bps(int baudrate)
     }
 }
 
+/**
+ * Set UART device attributes (baudrate, databit, parity, stopbit, flow control)
+ * @param fd: UART device file descriptor
+ * @param config: Pointer to UartConfig structure
+ * @return 0 on success, -1 on failure
+ */
 static int uart_set_attr(int fd, UartConfig* config)
 {
     struct termios uart_attr;
@@ -90,13 +101,18 @@ static int uart_set_attr(int fd, UartConfig* config)
     return 0;
 }
 
+/**
+ * Open UART device and set attributes
+ * @param config: Pointer to UartConfig structure
+ * @return File descriptor on success, -1 on failure
+ */
 static int uart_open_device(UartConfig *config)
 {
     int fd = open(config->dev_path, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0)
     {
-        perror("Failed to open uart device");
-        fprintf(stderr, "Device path: %s\n", config->dev_path);
+        perror("[ERROR] Failed to open uart device");
+        fprintf(stderr, "[ERROR] Device path: %s\n", config->dev_path);
         return -1;
     }
 
@@ -108,6 +124,13 @@ static int uart_open_device(UartConfig *config)
     return fd;
 }
 
+/**
+ * Parse UART configuration from YAML file
+ * @param config_path: Path to YAML config file
+ * @param uart_configs: Output array of UartConfig
+ * @param max_num: Max number of UART configs to parse
+ * @return Number of parsed configs on success, -1 on failure
+ */
 static int parse_uart_config(const char* config_path, UartConfig* uart_configs, int max_num)
 {
     FILE* fp = fopen(config_path, "r");
@@ -158,7 +181,7 @@ static int parse_uart_config(const char* config_path, UartConfig* uart_configs, 
                     in_uart_item_map = 0;
                     uart_idx++;
                     if (uart_idx >= max_num) {
-                        fprintf(stderr, "[WARNING] Uart config num reach max: %d\n", max_num);
+                        fprintf(stderr, "[WARN] Uart config num reach max: %d\n", max_num);
                     }
                 } else if (in_root_mapping == 1) {
                     in_root_mapping = 0;
@@ -247,6 +270,11 @@ parse_done:
     return ret;
 }
 
+/**
+ * Handle UART read events (epoll callback)
+ * @param mgr: Pointer to UartMgr instance
+ * @param fd: UART device file descriptor
+ */
 static void uart_read_handler(UartMgr* mgr, int fd)
 {
     if (!mgr) return;
@@ -272,11 +300,16 @@ static void uart_read_handler(UartMgr* mgr, int fd)
     }
 }
 
+/**
+ * Initialize UART manager
+ * @param config_path: Path to YAML config file
+ * @return Pointer to UartMgr instance on success, NULL on failure
+ */
 UartMgr* uart_mgr_init(const char* config_path)
 {
     UartMgr* mgr = (UartMgr*)malloc(sizeof(UartMgr));
     if(!mgr) {
-        perror("Malloc UartMgr failed");
+        perror("[ERROR] Malloc UartMgr failed");
         return NULL;
     }
     memset(mgr, 0, sizeof(UartMgr));
@@ -284,7 +317,7 @@ UartMgr* uart_mgr_init(const char* config_path)
     UartConfig temp_configs[MAX_UART_NUM] = {0};
     int uart_count = parse_uart_config(config_path, temp_configs, MAX_UART_NUM);
     if(uart_count <= 0) {
-        fprintf(stderr, "Parse uart config failed, count: %d\n", uart_count);
+        fprintf(stderr, "[ERROR] Parse uart config failed, count: %d\n", uart_count);
         free(mgr);
         return NULL;
     }
@@ -293,7 +326,7 @@ UartMgr* uart_mgr_init(const char* config_path)
     for (int i = 0; i < uart_count; i++) {
         int idx = temp_configs[i].idx;
         if (idx < 0 || idx >= MAX_UART_NUM) {
-            fprintf(stderr, "Invalid uart idx: %d, skip\n", idx);
+            fprintf(stderr, "[WARN] Invalid uart idx: %d, skip\n", idx);
             continue;
         }
         mgr->uarts[idx].config = temp_configs[i];
@@ -302,7 +335,7 @@ UartMgr* uart_mgr_init(const char* config_path)
 
     mgr->epoll_fd = epoll_create1(0);
     if(mgr->epoll_fd < 0) {
-        perror("epoll_creat failed");
+        perror("[ERROR] epoll_creat failed");
         free(mgr);
         return NULL;
     }
@@ -316,20 +349,20 @@ UartMgr* uart_mgr_init(const char* config_path)
 
         uart->fd = uart_open_device(&uart->config);
         if(uart->fd < 0) {
-            fprintf(stderr, "Init uart %d failed (path: %s)\n", idx, uart->config.dev_path);
+            fprintf(stderr, "[ERROR] Init uart %d failed (path: %s)\n", idx, uart->config.dev_path);
             continue;
         }
 
         ev.events = EPOLLIN | EPOLLET;
         ev.data.fd = uart->fd;
         if(epoll_ctl(mgr->epoll_fd, EPOLL_CTL_ADD, uart->fd, &ev) < 0) {
-            perror("epoll_ctl add uart fd failed");
+            perror("[ERROR] epoll_ctl add uart fd failed");
             close(uart->fd);
             uart->fd = -1;
             continue;
         }
 
-        printf("UART %d init success: %s (baud:%d, data:%d, stop:%d, parity:%c)\n",
+        printf("[INFO] UART %d init success: %s (baud:%d, data:%d, stop:%d, parity:%c)\n",
                idx, uart->config.dev_path, uart->config.baudrate,
                uart->config.databit, uart->config.stopbit, uart->config.parity);
     }
@@ -337,6 +370,10 @@ UartMgr* uart_mgr_init(const char* config_path)
     return mgr;
 }
 
+/**
+ * Destroy UART manager and release resources
+ * @param mgr: Pointer to UartMgr instance
+ */
 void uart_mgr_destroy(UartMgr* mgr)
 {
     if (!mgr) return;
@@ -355,56 +392,45 @@ void uart_mgr_destroy(UartMgr* mgr)
     free(mgr);
 }
 
-void uart_mgr_event_loop(UartMgr* mgr)
-{
-    if(!mgr) return;
-
-    struct epoll_event events[EPOLL_MAX_EVENTS];
-    while(1) {
-        int nfds = epoll_wait(mgr->epoll_fd, events, EPOLL_MAX_EVENTS, 100);
-        if (nfds < 0) {
-            if(errno == EINTR) continue; 
-            perror("epoll_wait failed");
-            break;
-        } else if (nfds == 0) {
-            continue; 
-        }
-
-        for(int i = 0; i < nfds; i++) {
-            if(events[i].events & EPOLLIN) {
-                uart_read_handler(mgr, events[i].data.fd);
-            } else if (events[i].events & EPOLLERR) {
-                fprintf(stderr, "UART fd %d error\n", events[i].data.fd);
-            }
-        }
-    }
-}
-
+/**
+ * Write data to specified UART port
+ * @param mgr: Pointer to UartMgr instance
+ * @param uart_idx: UART index (0 ~ MAX_UART_NUM-1)
+ * @param data: Data buffer to write
+ * @param len: Length of data buffer
+ * @return Number of bytes written on success, -1 on failure
+ */
 int uart_mgr_write(UartMgr* mgr, int uart_idx, const char* data, int len)
 {
     if(!mgr || !data || len <= 0 || uart_idx < 0 || uart_idx >= MAX_UART_NUM) {
-        fprintf(stderr, "Invalid params (uart_idx: %d, len: %d)\n", uart_idx, len);
+        fprintf(stderr, "[ERROR] Invalid params (uart_idx: %d, len: %d)\n", uart_idx, len);
         return -1;
     }
 
     UartDev* uart = &mgr->uarts[uart_idx];
     if(uart->fd < 0 || !uart->config.enable) {
-        fprintf(stderr, "UART %d not enabled or fd invalid (fd: %d)\n", uart_idx, uart->fd);
+        fprintf(stderr, "[ERROR] UART %d not enabled or fd invalid (fd: %d)\n", uart_idx, uart->fd);
         return -1;
     }
 
     ssize_t ret = write(uart->fd, data, len);
     if(ret > 0) {
         uart->tx_bytes += ret;
-        printf("[UART %d] Write %ld bytes success (total tx: %lu)\n", 
+        printf("[INFO] [UART %d] Write %ld bytes success (total tx: %lu)\n", 
                uart_idx, ret, uart->tx_bytes);
     } else {
         uart->err_count++;
-        perror("UART write error");
+        perror("[ERROR] UART write error");
     }
     return (int)ret;
 }
 
+/**
+ * Get UART device status
+ * @param mgr: Pointer to UartMgr instance
+ * @param uart_idx: UART index (0 ~ MAX_UART_NUM-1)
+ * @param status: Output UartDev structure
+ */
 void uart_mgr_get_status(UartMgr* mgr, int uart_idx, UartDev* status) {
     if (!mgr || !status || uart_idx < 0 || uart_idx >= MAX_UART_NUM) {
         memset(status, 0, sizeof(UartDev));
@@ -412,3 +438,69 @@ void uart_mgr_get_status(UartMgr* mgr, int uart_idx, UartDev* status) {
     }
     memcpy(status, &mgr->uarts[uart_idx], sizeof(UartDev));
 }
+
+/**
+ * Get UART device by index
+ * @param mgr: Pointer to UartMgr instance
+ * @param uart_idx: UART index (0 ~ MAX_UART_NUM-1)
+ * @return Pointer to UartDev instance on success, NULL on failure
+ */
+UartDev* uart_mgr_get_uart_by_idx(UartMgr* mgr, int uart_idx)
+{
+    if (!mgr || uart_idx < 0 || uart_idx >= MAX_UART_NUM) {
+        return NULL;
+    }
+    return &mgr->uarts[uart_idx];
+}
+
+/**
+ * Write Modbus RTU frame to specified UART port
+ * @param mgr: Pointer to UartMgr instance
+ * @param uart_idx: UART index (0 ~ MAX_UART_NUM-1)
+ * @param rtu_frame: Pointer to ModbusRTUFrame structure
+ * @return Number of bytes written on success, -1 on failure
+ */
+int modbus_rtu_frame_write(UartMgr* mgr, int uart_idx, const ModbusRTUFrame* rtu_frame)
+{
+    if (mgr == NULL || rtu_frame == NULL) {
+        fprintf(stderr, "[ERROR] Invalid input params\n");
+        return -1;
+    }
+    if (rtu_frame->data_len > (MODBUS_MAX_FRAME_LEN - 3)) {\
+        fprintf(stderr, "[ERROR] Modbus RTU frame data len exceed max\n");
+        return -1;
+    }
+/*
+    if (rtu_frame->crc == 0x0000 && rtu_frame->data_len > 0) {
+        return -2;
+    }
+*/
+    static uint8_t send_buf[MODBUS_MAX_FRAME_LEN] = {0};
+    int total_send_len = 1 + 1 + rtu_frame->data_len + 2;
+    int offset = 0;
+
+    send_buf[offset++] = rtu_frame->slave_addr;
+    send_buf[offset++] = rtu_frame->func_code;
+    memcpy(&send_buf[offset], rtu_frame->data, rtu_frame->data_len);
+    offset += rtu_frame->data_len;
+    send_buf[offset++] = rtu_frame->crc & 0xFF;  
+    send_buf[offset++] = (rtu_frame->crc >> 8) & 0xFF; 
+
+    UartDev* uart = &mgr->uarts[uart_idx];
+    if(uart->fd < 0 || !uart->config.enable) {
+        fprintf(stderr, "[ERROR] UART %d not enabled or fd invalid (fd: %d)\n", uart_idx, uart->fd);
+        return -1;
+    }
+
+    ssize_t ret = write(uart->fd, send_buf, total_send_len);
+    if(ret > 0) {
+        uart->tx_bytes += ret;
+        printf("[INFO] [UART %d] Write %ld bytes success (total tx: %lu)\n", 
+               uart_idx, ret, uart->tx_bytes);
+    } else {
+        uart->err_count++;
+        perror("[ERROR] UART write error");
+    }
+    return (int)ret;
+}
+

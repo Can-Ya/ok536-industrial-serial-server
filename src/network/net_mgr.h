@@ -2,6 +2,7 @@
 #define NET_MGR_H
 
 #include <stdio.h>
+#include <stdint.h> 
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -11,18 +12,21 @@
 #include <pthread.h>
 #include <string.h>
 
+// Global constants for network management
 #define TCP_PORT 8888
-#define UDP_PORT 8888
-#define MAX_CLIENT_NUM 10
+#define UDP_PORT 8889
+#define MAX_CLIENT_NUM 4
 #define LISTEN_BACKLOG 5
 #define BUF_SIZE 1024
 
+// Network working mode enumeration
 typedef enum {
     NET_MODE_TCP_SERVER,
     NET_MODE_TCP_CLIENT,
     NET_MODE_UDP
 } NetMode;
 
+// Runtime status structure for a single TCP client
 typedef struct {
     int fd;
     struct sockaddr_in addr;
@@ -32,6 +36,7 @@ typedef struct {
     pthread_mutex_t mutex;
 } TcpClient;
 
+// Manager structure for global network resource management
 typedef struct {
     NetMode mode;
     int server_fd;
@@ -45,11 +50,11 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port);
 
 void net_mgr_destroy(NetMgr* mgr);
 
-int net_mgr_broadcast_tcp(NetMgr* mgr, const char* data, int len);
+int net_mgr_broadcast_tcp(NetMgr* mgr, const uint8_t* data, int len);
 
-int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const char* data, int len);
+int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const uint8_t* data, int len);
 
-int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, char* buf, int len);
+int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, uint8_t* buf, int len);
 
 int net_mgr_send_udp(NetMgr* mgr, const char* ip, int port, const char* data, int len);
 
