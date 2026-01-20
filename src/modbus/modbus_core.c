@@ -1,4 +1,5 @@
 #include "modbus_core.h"
+#include "../log/log.h"
 
 /**
  * Calculate Modbus RTU CRC16 checksum
@@ -10,7 +11,7 @@ uint16_t modbus_crc16(const uint8_t* data, uint16_t len)
 {
     uint16_t crc = 0xFFFF;
     if (data == NULL || len == 0) {
-        fprintf(stderr, "[WARN] Modbus CRC16 input data is null or len is 0\n");
+        LOG_WARN("Modbus CRC16 input data is null or len is 0");
         return crc;
     }
 
@@ -40,7 +41,7 @@ uint16_t modbus_crc16(const uint8_t* data, uint16_t len)
 int modbus_parse_tcp_data(const uint8_t* tcp_data, uint16_t data_len, ModbusTCPFrame* tcp_frame)
 {
     if (tcp_data == NULL || tcp_frame == NULL || data_len < MODBUS_TCP_HEADER_LEN) {
-        fprintf(stderr, "[ERROR] Modbus TCP parse invalid params\n");
+        LOG_ERROR("Modbus TCP parse invalid params");
         return -1;
     }
 
@@ -51,12 +52,12 @@ int modbus_parse_tcp_data(const uint8_t* tcp_data, uint16_t data_len, ModbusTCPF
     tcp_frame->length = (tcp_data[4] << 8) | tcp_data[5];
 
     if (tcp_frame->protocol_id != MODBUS_TCP_PROTOCOL_ID) {
-        fprintf(stderr, "[ERROR] Modbus TCP protocol ID is not 0\n");
+        LOG_ERROR("Modbus TCP protocol ID is not 0");
         return -2;
     }
 
     if (tcp_frame->length + MODBUS_TCP_HEADER_LEN != data_len) {
-        fprintf(stderr, "[ERROR] Modbus TCP frame length mismatch\n");
+        LOG_ERROR("Modbus TCP frame length mismatch");
         return -3;
     }
 
@@ -67,7 +68,7 @@ int modbus_parse_tcp_data(const uint8_t* tcp_data, uint16_t data_len, ModbusTCPF
 
     if (tcp_frame->data_len > 0) {
         if (pdu_offset + 2 + tcp_frame->data_len > data_len) {
-            fprintf(stderr, "[ERROR] Modbus TCP data out of bounds\n");
+            LOG_ERROR("Modbus TCP data out of bounds");
             return -4;
         }
         memcpy(tcp_frame->data, tcp_data + pdu_offset + 2, tcp_frame->data_len);
@@ -86,7 +87,7 @@ int modbus_parse_tcp_data(const uint8_t* tcp_data, uint16_t data_len, ModbusTCPF
 int modbus_parse_rtu_data(const uint8_t* rtu_data, uint16_t data_len, ModbusRTUFrame* rtu_frame)
 {
     if (rtu_data == NULL || rtu_frame == NULL || data_len < 4 || data_len > MODBUS_MAX_FRAME_LEN) {
-        fprintf(stderr, "[ERROR] Modbus RTU parse invalid params\n");
+        LOG_ERROR("Modbus RTU parse invalid params");
         return -1;
     }
 
@@ -103,7 +104,7 @@ int modbus_parse_rtu_data(const uint8_t* rtu_data, uint16_t data_len, ModbusRTUF
 
     uint16_t calc_crc = modbus_crc16(rtu_data, data_len - 2);
     if (calc_crc != rtu_frame->crc) {
-        fprintf(stderr, "[ERROR] Modbus RTU CRC check failed (calc: 0x%04X, recv: 0x%04X)\n", calc_crc, rtu_frame->crc);
+        LOG_ERROR("Modbus RTU CRC check failed (calc: 0x%04X, recv: 0x%04X)", calc_crc, rtu_frame->crc);
         return -2;
     }
 

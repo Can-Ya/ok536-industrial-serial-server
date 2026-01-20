@@ -1,4 +1,5 @@
 #include "net_mgr.h"
+#include "../log/log.h"
 
 
 /**
@@ -35,9 +36,7 @@ static void update_client_active(NetMgr* mgr, int client_idx)
 {
     if (!mgr || client_idx < 0 || client_idx >= MAX_CLIENT_NUM) return;
     TcpClient* client = &mgr->clients[client_idx];
-    pthread_mutex_lock(&client->mutex);
     client->last_active = time(NULL);
-    pthread_mutex_unlock(&client->mutex);
 }
 
 /**
@@ -50,19 +49,19 @@ static void close_tcp_client(NetMgr* mgr, int client_idx)
     if (!mgr || client_idx < 0 || client_idx >= MAX_CLIENT_NUM) return;
     TcpClient* client = &mgr->clients[client_idx];
 
-    pthread_mutex_lock(&client->mutex);
+    // pthread_mutex_lock(&client->mutex);
     if (client->connected && client->fd > 0) {
         shutdown(client->fd, SHUT_RDWR);
         close(client->fd);
-        printf("[INFO] Client %d (%s:%d) closed (timeout/invalid)\n", 
-               client_idx, inet_ntoa(client->addr.sin_addr), ntohs(client->addr.sin_port));
+        LOG_INFO("%d (%s:%d) closed (timeout/invalid)", 
+                client_idx, inet_ntoa(client->addr.sin_addr), ntohs(client->addr.sin_port));
     }
     client->fd = -1;
     client->connected = 0;
     client->rx_bytes = 0;
     client->tx_bytes = 0;
     client->last_active = 0;
-    pthread_mutex_unlock(&client->mutex);
+    // pthread_mutex_unlock(&client->mutex);
 }
 
 /**
@@ -105,13 +104,13 @@ static void* tcp_server_thread(void* arg)
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
 
-    printf("[INFO] TCP server thread start, listen port: %d\n", TCP_PORT);
+    LOG_INFO("TCP server thread start, listen port: %d", TCP_PORT);
 
     while (1) {
         int client_fd = accept(mgr->server_fd, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) {
             if (errno == EINTR) continue;
-            perror("[ERROR] TCP accept failed");
+            LOG_ERROR("TCP accept failed");
             break;
         }
 
@@ -130,7 +129,7 @@ static void* tcp_server_thread(void* arg)
 
         if (client_idx == -1) {
             close(client_fd);
-            fprintf(stderr, "[WARN] TCP client max num reacher, reject new connection\n");
+            LOG_WARN("TCP client max num reacher, reject new connection");
             continue;
         }
 
@@ -147,7 +146,7 @@ static void* tcp_server_thread(void* arg)
         client->last_active = time(NULL);
         pthread_mutex_unlock(&client->mutex);
 
-        printf("[INFO] TCP client connected: %s:%d (idx: %d)\n", 
+        LOG_INFO("TCP client connected: %s:%d (idx: %d)", 
                 inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), client_idx);
     }
     return NULL;
@@ -167,7 +166,7 @@ static void* tcp_client_thread(void* arg)
     server_addr.sin_port = htons(TCP_PORT);
 
     if (inet_pton(AF_INET, (char*)arg + sizeof(NetMgr*), &server_addr.sin_addr) <= 0) {
-        perror("[ERROR] Invalid server IP");
+        LOG_ERROR("Invalid server IP");
         return NULL;
     }
 
@@ -176,22 +175,24 @@ static void* tcp_client_thread(void* arg)
         if (mgr->client_fd < 0 || !mgr->client_fd) {
             mgr->client_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (mgr->client_fd < 0) {
-                perror("[ERROR] TCP client socket create failed");
+                LOG_ERROR("TCP client socket create failed");
                 pthread_mutex_unlock(&mgr->mutex);
                 sleep(1);
                 continue;
             }
 
-            printf("[INFO] TCP client connecting to %s:%d...\n", inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
+            LOG_INFO("TCP client connecting to %s:%d...", 
+                    inet_ntoa(server_addr.sin_addr), ntohs(server_addr.sin_port));
+
             if (connect(mgr->client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-                perror("[ERROR] TCP client connerc failed");
+                LOG_ERROR("TCP client connerc failed");
                 close(mgr->client_fd);
                 mgr->client_fd = -1;
                 pthread_mutex_unlock(&mgr->mutex);
                 sleep(3);
                 continue;
             }
-            printf("[INFO] TCP client connected to server\n");
+            LOG_INFO("TCP client connected to server");
         }
         pthread_mutex_unlock(&mgr->mutex);
         sleep(1);
@@ -219,7 +220,7 @@ static void* udp_thread(void* arg) {
 NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
     NetMgr* mgr = (NetMgr*)malloc(sizeof(NetMgr));
     if (!mgr) {
-        perror("[ERROR] Malloc NetMgr failed");
+        LOG_ERROR("Malloc NetMgr failed");
         return NULL;
     }
     memset(mgr, 0, sizeof(NetMgr));
@@ -235,7 +236,7 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
         case NET_MODE_TCP_SERVER:
             mgr->server_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (mgr->server_fd < 0) {
-                perror("[ERROR] TCP server socket create failed");
+                LOG_ERROR("TCP server socket create failed");
                 free(mgr);
                 return NULL;
             }
@@ -248,28 +249,28 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
             server_addr.sin_port = htons(port > 0 ? port : TCP_PORT);
 
             if (bind(mgr->server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-                perror("[ERROR] TCP server bind failed");
+                LOG_ERROR("TCP server bind failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
             if (listen(mgr->server_fd, LISTEN_BACKLOG) < 0) {
-                perror("[ERROR] TCP server listen failed");
+                LOG_ERROR("TCP server listen failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
             if (pthread_create(&mgr->net_thread, NULL, tcp_server_thread, mgr) != 0) {
-                perror("[ERROR] Create TCP server thread failed");
+                LOG_ERROR("Create TCP server thread failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
              if (pthread_create(&mgr->clean_thread, NULL, tcp_conn_clean_thread, mgr) != 0) {
-                perror("[ERROR] Create TCP clean thread failed");
+                LOG_ERROR("Create TCP clean thread failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
@@ -279,7 +280,7 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
 
         case NET_MODE_TCP_CLIENT: 
             if (pthread_create(&mgr->net_thread, NULL, tcp_client_thread, mgr) != 0) {
-                perror("[ERROR] Create TCP client thread failed");
+                LOG_ERROR("Create TCP client thread failed");
                 free(mgr);
                 return NULL;
             }
@@ -288,7 +289,7 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
         case NET_MODE_UDP: 
             mgr->server_fd = socket(AF_INET, SOCK_DGRAM, 0);
             if (mgr->server_fd < 0) {
-                perror("[ERROR] UDP socket create failed");
+                LOG_ERROR("UDP socket create failed");
                 free(mgr);
                 return NULL;
             }
@@ -301,14 +302,14 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
             udp_addr.sin_port = htons(port > 0 ? port : UDP_PORT);
 
             if (bind(mgr->server_fd, (struct sockaddr*)&udp_addr, sizeof(udp_addr)) < 0) {
-                perror("[ERROR] UDP bind failed");
+                LOG_ERROR("UDP bind failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
             }
 
             if (pthread_create(&mgr->net_thread, NULL, udp_thread, mgr) != 0) {
-                perror("[ERROR] Create UDP thread failed");
+                LOG_ERROR("Create UDP thread failed");
                 close(mgr->server_fd);
                 free(mgr);
                 return NULL;
@@ -352,6 +353,8 @@ void net_mgr_destroy(NetMgr* mgr)
         pthread_join(mgr->clean_thread, NULL);
     }
 
+    LOG_INFO("NetMge has destroyed");
+
     pthread_mutex_destroy(&mgr->mutex);
     free(mgr);
 }
@@ -381,7 +384,7 @@ int net_mgr_broadcast_tcp(NetMgr* mgr, const uint8_t* data, int len)
             send_count++;
         } else if (ret < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                fprintf(stderr, "[ERROR] Send to client %d failed, close conn\n", i);
+                LOG_ERROR("Send to client %d failed, close conn", i);
                 close_tcp_client(mgr, i);
             }
         }
@@ -415,7 +418,7 @@ int net_mgr_send_tcp(NetMgr* mgr, int client_idx, const uint8_t* data, int len) 
         return -1;
     }
 
-    ssize_t ret = send(client->fd, (const void*)data, len, 0);
+    ssize_t ret = send(client->fd, (const void*)data, len, MSG_NOSIGNAL);
     if (ret > 0) {
         client->tx_bytes += ret;
     } else {
@@ -453,24 +456,21 @@ int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, uint8_t* buf, int len)
     struct timeval tv = {1, 0};
     setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    ssize_t ret = recv(client->fd, (void*)buf, len - 1, 0);
+    ssize_t ret = recv(client->fd, (void*)buf, len - 1, MSG_NOSIGNAL);
     if (ret > 0) {
         client->rx_bytes += ret;
         update_client_active(mgr, client_idx);
         buf[ret] = '\0';
     } else if (ret == 0) {
-        close(client->fd);
-        client->fd = -1;
-        client->connected = 0;
+        close_tcp_client(mgr, client_idx);
         ret = -1; 
     } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
         ret = 0; 
     } else {
-        close(client->fd);
-        client->fd = -1;
-        client->connected = 0;
+        close_tcp_client(mgr, client_idx);
         ret = -1;
     }
+
     pthread_mutex_unlock(&client->mutex);
 
     return ret;

@@ -12,7 +12,7 @@
 #include <sys/epoll.h>
 #include <string.h>
 #include <yaml.h>
-#include "modbus_core.h"
+#include "../modbus/modbus_core.h"
 
 // Global constants for UART management
 #define MAX_UART_NUM 17          // Maximum number of UART devices supported

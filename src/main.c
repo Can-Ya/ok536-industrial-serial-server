@@ -7,9 +7,11 @@
 #include <errno.h>
 #include <sys/epoll.h> 
 
-#include "uart_mgr.h"
-#include "modbus_core.h"
-#include "net_mgr.h"
+#include "./log/log.h"
+#include "./modbus/modbus_core.h"
+#include "./net/net_mgr.h"
+#include "./uart/uart_mgr.h"
+
 
 // Global manager instances (cross-thread shared)
 UartMgr*    g_uart_mgr  = NULL;  // Global UART manager instance (manages all UART devices)
@@ -170,6 +172,12 @@ void epoll_handle_uart_events() {
  */
 int main(int argc, char *argv[])
 {
+    if (log_init() != 0) {
+        // 日志初始化失败的降级提示（可选）
+        fprintf(stderr, "Log system init failed! Exit...\n");
+        return -1;
+    }
+
     if(argc != 2) {
         fprintf(stderr, "[ERROR] Usage: %s <uart_config.yaml path>\n", argv[0]);
         fprintf(stderr, "[INFO] Example: ./serial_server ./uart_config.yaml\n");
@@ -178,46 +186,47 @@ int main(int argc, char *argv[])
 
     signal(SIGINT, sig_handler);
 
-    printf("[INFO] Start init UART manager...\n");
+    LOG_INFO("[INFO] Start init UART manager...");
     g_uart_mgr = uart_mgr_init(argv[1]);
     if (g_uart_mgr == NULL) {
-        fprintf(stderr, "[ERROR] UART manager init failed!\n");
+        LOG_ERROR("[ERROR] UART manager init failed!");
         return -1;
     }
-    printf("[INFO] UART manager init OK, enable UART count: %d\n", g_uart_mgr->uart_count);
+    LOG_INFO("UART manager init OK, enable UART count: %d", g_uart_mgr->uart_count);
 
-    printf("[INFO] Start init Network manager (TCP Server 192.168.1.232:8888)...\n");
+    LOG_INFO("Start init Network manager (TCP Server 192.168.1.232:8888)...");
     g_net_mgr = net_mgr_init(NET_MODE_TCP_SERVER, NULL, 8888);
     if(g_net_mgr == NULL)
     {
-        fprintf(stderr, "[ERROR] Network manager init failed!\n");
-
+        LOG_ERROR("Network manager init failed!");
         uart_mgr_destroy(g_uart_mgr);
         return -1;
     }
-    printf("[INFO] Network manager init OK\n");
+    LOG_INFO("Network manager init OK");
 
-    printf("[INFO] Start create Modbus process thread...\n");
+    LOG_INFO("Start create Modbus process thread...");
     int phread_ret = pthread_create(&g_modbus_thread, NULL, modbus_process_thread, NULL);
     if (phread_ret != 0) {
-        fprintf(stderr, "[ERROR] Create modbus thread failed:%s\n", strerror(phread_ret));
+        LOG_ERROR("Create modbus thread failed:%s", strerror(phread_ret));
         net_mgr_destroy(g_net_mgr);
         uart_mgr_destroy(g_uart_mgr);
         return -1;
     }
-    printf("[INFO] All module init complete! System running...\n");
-    printf("[INFO] Press Ctrl+C to exit\n");
+    LOG_INFO("All module init complete! System running...");
+    LOG_INFO("Press Ctrl+C to exit");
 
     while (g_running) {
         epoll_handle_uart_events();
         usleep(1000); 
     }
 
+    LOG_INFO("Start release resource...");
     printf("[EXIT] Start release resource...\n");
     pthread_cancel(g_modbus_thread);
     pthread_join(g_modbus_thread, NULL);
     net_mgr_destroy(g_net_mgr);
     uart_mgr_destroy(g_uart_mgr);
+    LOG_INFO("All resource released, program exit success!");
     printf("[EXIT] All resource released, program exit success!\n");
 
     return 0;
