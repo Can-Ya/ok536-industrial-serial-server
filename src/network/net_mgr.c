@@ -1,5 +1,5 @@
 #include "net_mgr.h"
-#include <errno.h>
+
 
 /**
  * Initialize TCP client structure
@@ -10,6 +10,7 @@ static void tcp_client_init(TcpClient* client) {
     memset(client, 0, sizeof(TcpClient));
     client->fd = -1;
     client->connected = 0;
+    client->last_active = time(NULL);
     pthread_mutex_init(&client->mutex, NULL);
 }
 
@@ -26,11 +27,80 @@ static void tcp_client_destroy(TcpClient* client) {
 }
 
 /**
+ * Update TCP client active time
+ * @param mgr: Pointer to NetMgr instance
+ * @param client_idx: Pointer to client idx
+ */
+static void update_client_active(NetMgr* mgr, int client_idx)
+{
+    if (!mgr || client_idx < 0 || client_idx >= MAX_CLIENT_NUM) return;
+    TcpClient* client = &mgr->clients[client_idx];
+    pthread_mutex_lock(&client->mutex);
+    client->last_active = time(NULL);
+    pthread_mutex_unlock(&client->mutex);
+}
+
+/**
+ * Close TCP client
+ * @param mgr: Pointer to NetMgr instance
+ * @param client_idx: Pointer to client idx
+ */
+static void close_tcp_client(NetMgr* mgr, int client_idx)
+{
+    if (!mgr || client_idx < 0 || client_idx >= MAX_CLIENT_NUM) return;
+    TcpClient* client = &mgr->clients[client_idx];
+
+    pthread_mutex_lock(&client->mutex);
+    if (client->connected && client->fd > 0) {
+        shutdown(client->fd, SHUT_RDWR);
+        close(client->fd);
+        printf("[INFO] Client %d (%s:%d) closed (timeout/invalid)\n", 
+               client_idx, inet_ntoa(client->addr.sin_addr), ntohs(client->addr.sin_port));
+    }
+    client->fd = -1;
+    client->connected = 0;
+    client->rx_bytes = 0;
+    client->tx_bytes = 0;
+    client->last_active = 0;
+    pthread_mutex_unlock(&client->mutex);
+}
+
+/**
+ * TCP client connect clean thread function
+ * @param arg: Pointer to NetMgr instance
+ * @return NULL on exit
+ */
+static void* tcp_conn_clean_thread(void* arg)
+{
+    NetMgr* mgr = (NetMgr*)arg;
+    time_t now;
+
+    while (1) {
+        now = time(NULL);
+        pthread_mutex_lock(&mgr->mutex);
+
+        for (int i = 0; i < MAX_CLIENT_NUM; i++) {
+            TcpClient* client = &mgr->clients[i];
+            if (!client->connected || client->fd < 0) continue;
+
+            if (difftime(now, client->last_active) > CONN_TIMEOUT) {
+                close_tcp_client(mgr, i);
+            }
+        }
+
+        pthread_mutex_unlock(&mgr->mutex);
+        sleep(5);
+    }
+    return NULL;
+}
+
+/**
  * TCP server thread function (handle client connections)
  * @param arg: Pointer to NetMgr instance
  * @return NULL on exit
  */
-static void* tcp_server_thread(void* arg) {
+static void* tcp_server_thread(void* arg) 
+{
     NetMgr* mgr = (NetMgr*)arg;
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -44,6 +114,9 @@ static void* tcp_server_thread(void* arg) {
             perror("[ERROR] TCP accept failed");
             break;
         }
+
+        int flags = fcntl(client_fd, F_GETFL, 0);
+        fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
 
         int client_idx = -1;
         pthread_mutex_lock(&mgr->mutex);
@@ -71,6 +144,7 @@ static void* tcp_server_thread(void* arg) {
         client->connected = 1;
         client->rx_bytes = 0;
         client->tx_bytes = 0;
+        client->last_active = time(NULL);
         pthread_mutex_unlock(&client->mutex);
 
         printf("[INFO] TCP client connected: %s:%d (idx: %d)\n", 
@@ -193,6 +267,14 @@ NetMgr* net_mgr_init(NetMode mode, const char* server_ip, int port) {
                 free(mgr);
                 return NULL;
             }
+
+             if (pthread_create(&mgr->clean_thread, NULL, tcp_conn_clean_thread, mgr) != 0) {
+                perror("[ERROR] Create TCP clean thread failed");
+                close(mgr->server_fd);
+                free(mgr);
+                return NULL;
+            }
+            pthread_detach(mgr->clean_thread);
             break;
 
         case NET_MODE_TCP_CLIENT: 
@@ -265,6 +347,11 @@ void net_mgr_destroy(NetMgr* mgr)
         pthread_join(mgr->net_thread, NULL);
     }
 
+    if (mgr->clean_thread) {
+        pthread_cancel(mgr->clean_thread);
+        pthread_join(mgr->clean_thread, NULL);
+    }
+
     pthread_mutex_destroy(&mgr->mutex);
     free(mgr);
 }
@@ -287,14 +374,16 @@ int net_mgr_broadcast_tcp(NetMgr* mgr, const uint8_t* data, int len)
         if (!client->connected || client->fd < 0) continue;
 
         pthread_mutex_lock(&client->mutex);
-        ssize_t ret = send(client->fd, (const void*)data, len, 0);
+        ssize_t ret = send(client->fd, (const void*)data, len, MSG_NOSIGNAL);
         if (ret > 0) {
             client->tx_bytes += ret;
+            update_client_active(mgr, i);
             send_count++;
-        } else {
-            close(client->fd);
-            client->fd = -1;
-            client->connected = 0;
+        } else if (ret < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                fprintf(stderr, "[ERROR] Send to client %d failed, close conn\n", i);
+                close_tcp_client(mgr, i);
+            }
         }
         pthread_mutex_unlock(&client->mutex);
     }
@@ -367,6 +456,7 @@ int net_mgr_recv_tcp(NetMgr* mgr, int client_idx, uint8_t* buf, int len)
     ssize_t ret = recv(client->fd, (void*)buf, len - 1, 0);
     if (ret > 0) {
         client->rx_bytes += ret;
+        update_client_active(mgr, client_idx);
         buf[ret] = '\0';
     } else if (ret == 0) {
         close(client->fd);

@@ -11,6 +11,9 @@
 #include <sys/time.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <fcntl.h>
 
 // Global constants for network management
 #define TCP_PORT 8888
@@ -18,6 +21,7 @@
 #define MAX_CLIENT_NUM 4
 #define LISTEN_BACKLOG 5
 #define BUF_SIZE 1024
+#define CONN_TIMEOUT 30
 
 // Network working mode enumeration
 typedef enum {
@@ -34,6 +38,7 @@ typedef struct {
     uint64_t rx_bytes;
     uint64_t tx_bytes;
     pthread_mutex_t mutex;
+    time_t last_active;
 } TcpClient;
 
 // Manager structure for global network resource management
@@ -43,6 +48,7 @@ typedef struct {
     int client_fd;
     TcpClient clients[MAX_CLIENT_NUM];
     pthread_t net_thread;
+    pthread_t clean_thread;
     pthread_mutex_t mutex;
 } NetMgr;
 
