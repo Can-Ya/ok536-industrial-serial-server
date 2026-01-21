@@ -2,7 +2,6 @@
 
 // Static global variables (file scope only)
 static FILE *g_log_fp = NULL;          /**< Log file handle */
-static LogLevel g_log_level = LOG_LEVEL_DEFAULT;  /**< Current log filter level */
 static unsigned long g_log_file_size = 0;  /**< Current log file size (bytes) */
 
 /**
@@ -10,14 +9,14 @@ static unsigned long g_log_file_size = 0;  /**< Current log file size (bytes) */
  * @param level: Log level to convert
  * @return Const string of log level name
  */
-static const char *log_level_to_str(LogLevel level)
+const char *log_level_to_str(LogLevel level)
 {
     switch (level) {
         case LOG_LEVEL_DEBUG:   return "DEBUG";
-        case LOG_LEVEL_INFO:    return "DEBUG";
-        case LOG_LEVEL_WARN:    return "DEBUG";
-        case LOG_LEVEL_ERROR:   return "DEBUG";
-        case LOG_LEVEL_FATAL:   return "DEBUG";
+        case LOG_LEVEL_INFO:    return "INFO";
+        case LOG_LEVEL_WARN:    return "WARN";
+        case LOG_LEVEL_ERROR:   return "ERROR";
+        case LOG_LEVEL_FATAL:   return "FATAL";
         default:                return "UNKNOWN";
     }
 }
@@ -89,8 +88,8 @@ int log_init(void)
     fseek(g_log_fp, 0, SEEK_END);
     g_log_file_size = ftell(g_log_fp);
 
-    LOG_INFO("Serial server log system init success. Log file: %s, max size: %dMB",
-             LOG_FILE_PATH, LOG_MAX_SIZE / (1024 * 1024));
+    LOG_INFO("Serial server log system init success");
+    LOG_INFO("Log file: %s, Max size: %d MB", LOG_FILE_PATH, (LOG_MAX_SIZE / (1024 * 1024)));
 
     return 0;
 }
@@ -147,12 +146,12 @@ void log_write(LogLevel level, const char *file, int line, const char *fmt, ...)
 }
 
 /**
- * Deinitialize log system implementation
+ * Destroy log system implementation
  * Close log file and release resources
  */
-void log_deinit(void)
+void log_destroy(void)
 {
-    LOG_INFO("Serial server log system deinit.");
+    LOG_INFO("Serial server log system destroyed");
     if (g_log_fp) {
         fclose(g_log_fp);
         g_log_fp = NULL;

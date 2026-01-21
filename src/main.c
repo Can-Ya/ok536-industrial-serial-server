@@ -6,8 +6,10 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/epoll.h> 
+#include <arpa/inet.h>
 
 #include "./log/log.h"
+#include "./cli/cli_mgr.h"
 #include "./modbus/modbus_core.h"
 #include "./net/net_mgr.h"
 #include "./uart/uart_mgr.h"
@@ -18,6 +20,7 @@ UartMgr*    g_uart_mgr  = NULL;  // Global UART manager instance (manages all UA
 NetMgr*     g_net_mgr   = NULL;  // Global network manager instance (handles TCP/UDP communication)
 volatile int g_running   = 1;    // Global flag to control program running state (0: exit)
 pthread_t   g_modbus_thread;     // Modbus protocol processing thread ID
+pthread_t   g_cli_thread;        // CLI processing thread ID
 ModbusRTUFrame g_modbus_rtu;     // Global Modbus RTU frame (for TCP-RTU conversion)
 ModbusTCPFrame g_modbus_tcp;     // Global Modbus TCP frame (for network data parsing)
 
@@ -38,34 +41,33 @@ void* modbus_process_thread(void* arg)
             // Modbus TCP data example：00 01 00 00 00 06 03 03 00 00 00 01
             if (net_recv_len <= 0) continue;
             if (modbus_parse_tcp_data(net_recv_buf, net_recv_len, &g_modbus_tcp) != 0) {
-                fprintf(stderr, "[ERROR] tcp_client %d send data is error\n", client_idx);
+                LOG_ERROR("Tcp_client %d send data is error", client_idx);
                 continue;
             }
 
             if (modbus_tcp_to_rtu(&g_modbus_tcp, &g_modbus_rtu) != 0) {
-                fprintf(stderr, "[ERROR] tcp to rtu failed, client idx: %d\n", client_idx);
+                LOG_ERROR("Tcp to rtu failed, client idx: %d", client_idx);
                 continue;
             }
 
             UartDev* p_uart = uart_mgr_get_uart_by_idx(g_uart_mgr, g_modbus_rtu.slave_addr);
             if (p_uart == NULL || p_uart->fd < 0 || !p_uart->config.enable) {
-               fprintf(stderr, "[WARN] UART %d is unenable\n", g_modbus_rtu.slave_addr);
+                LOG_ERROR("UART %d is unenable", g_modbus_rtu.slave_addr);
                 continue;
             }
 
             if (p_uart->config.modbus_enable) {
                 if (modbus_rtu_frame_write(g_uart_mgr,g_modbus_rtu.slave_addr, &g_modbus_rtu) <= 0) {
-                    fprintf(stderr, "[ERROR] UART %d write failed\n", g_modbus_rtu.slave_addr);
+                    LOG_ERROR("UART %d write failed", g_modbus_rtu.slave_addr);
                 }
             } else {
                 if (uart_mgr_write(g_uart_mgr, g_modbus_rtu.slave_addr, g_modbus_rtu.data, g_modbus_rtu.data_len) <= 0) {
-                    fprintf(stderr, "[ERROR] UART %d write failed\n", g_modbus_rtu.slave_addr);
+                    LOG_ERROR("UART %d write failed", g_modbus_rtu.slave_addr);
                 }
             }
         }
         usleep(10000);
     }
-    printf("[INFO] Modbus process thread exit\n");
     pthread_exit(NULL);
 }
 
@@ -76,7 +78,7 @@ void* modbus_process_thread(void* arg)
 void sig_handler(int sig)
 {
     if (sig == SIGINT) {
-        printf("\n[INFO] Catch SIGINT, start exit program...\n");
+        LOG_INFO("Catch SIGINT, start exit program...");
         g_running = 0;
     }
 }
@@ -89,7 +91,7 @@ void epoll_handle_uart_events() {
     int nfds = epoll_wait(g_uart_mgr->epoll_fd, events, EPOLL_MAX_EVENTS, 100); 
     if (nfds < 0) {
         if (errno == EINTR) return; 
-        perror("[ERROR] epoll_wait failed");
+        LOG_ERROR("epoll_wait failed");
         return;
     } else if (nfds == 0) {
         return; 
@@ -106,7 +108,7 @@ void epoll_handle_uart_events() {
             }
         }
         if (uart_idx == -1) {
-            fprintf(stderr, "[WARN] Unknown fd %d in epoll\n", fd);
+            LOG_ERROR("Unknown fd %d in epoll", fd);
             continue;
         }
 
@@ -116,16 +118,11 @@ void epoll_handle_uart_events() {
         if (len <= 0) {
             if (len < 0 && errno != EAGAIN) {
                 uart->err_count++;
-                perror("[ERROR] UART read failed");
+                LOG_ERROR("UART read failed");
             }
             continue;
         }
         uart->rx_bytes += len;
-        printf("[INFO] [%s] Recv %ld bytes: ", uart->config.dev_path, len);
-        for (int k = 0; k < len; k++) {
-            printf("%02X ", buf[k]);
-        }
-        printf("\n");
 
         if (uart->config.modbus_enable) {
             static uint8_t send_buf[BUF_SIZE] = {0};
@@ -179,14 +176,14 @@ int main(int argc, char *argv[])
     }
 
     if(argc != 2) {
-        fprintf(stderr, "[ERROR] Usage: %s <uart_config.yaml path>\n", argv[0]);
-        fprintf(stderr, "[INFO] Example: ./serial_server ./uart_config.yaml\n");
+        LOG_ERROR("Usage: %s <uart_config.yaml path>", argv[0]);
+        LOG_INFO("Example: ./serial_server ./uart_config.yaml");
         return -1; 
     }
 
     signal(SIGINT, sig_handler);
 
-    LOG_INFO("[INFO] Start init UART manager...");
+    LOG_INFO("Start init UART manager...");
     g_uart_mgr = uart_mgr_init(argv[1]);
     if (g_uart_mgr == NULL) {
         LOG_ERROR("[ERROR] UART manager init failed!");
@@ -204,14 +201,41 @@ int main(int argc, char *argv[])
     }
     LOG_INFO("Network manager init OK");
 
+    LOG_INFO("Start init CLI manager...");
+    int cli_ret = cli_mgr_init();
+    if (cli_ret!= 0) {
+        LOG_ERROR("CLI manager init failed!");
+        net_mgr_destroy(g_net_mgr);
+        uart_mgr_destroy(g_uart_mgr);
+        return -1;
+    }
+    LOG_INFO("CLI managert init CLI OK");
+
     LOG_INFO("Start create Modbus process thread...");
     int phread_ret = pthread_create(&g_modbus_thread, NULL, modbus_process_thread, NULL);
     if (phread_ret != 0) {
         LOG_ERROR("Create modbus thread failed:%s", strerror(phread_ret));
         net_mgr_destroy(g_net_mgr);
         uart_mgr_destroy(g_uart_mgr);
+        cli_mgr_destroy();
         return -1;
     }
+    LOG_INFO("Modbus process thread OK");
+
+
+    LOG_INFO("Start create CLI thread...");
+    int cli_thread_ret = pthread_create(&g_cli_thread, NULL, cli_mgr_loop, NULL);
+    if (cli_thread_ret != 0) {
+        LOG_ERROR("Create CLI thread failed:%s", strerror(cli_thread_ret));
+        pthread_cancel(g_modbus_thread);
+        pthread_join(g_modbus_thread, NULL);
+        net_mgr_destroy(g_net_mgr);
+        uart_mgr_destroy(g_uart_mgr);
+        cli_mgr_destroy();
+        return -1;
+    }
+    LOG_INFO("CLI thread OK");
+
     LOG_INFO("All module init complete! System running...");
     LOG_INFO("Press Ctrl+C to exit");
 
@@ -221,12 +245,14 @@ int main(int argc, char *argv[])
     }
 
     LOG_INFO("Start release resource...");
-    printf("[EXIT] Start release resource...\n");
+    pthread_cancel(g_cli_thread);
+    pthread_join(g_cli_thread, NULL);
     pthread_cancel(g_modbus_thread);
     pthread_join(g_modbus_thread, NULL);
     net_mgr_destroy(g_net_mgr);
     uart_mgr_destroy(g_uart_mgr);
-    LOG_INFO("All resource released, program exit success!");
+    cli_mgr_destroy();
+    log_destroy();
     printf("[EXIT] All resource released, program exit success!\n");
 
     return 0;

@@ -21,8 +21,11 @@ typedef enum {
 #define LOG_MAX_SIZE        (1024 * 1024 * 5)
 #define LOG_LEVEL_DEFAULT   LOG_LEVEL_DEBUG
 #define is_output_screen    1
+static LogLevel g_log_level = LOG_LEVEL_DEFAULT;
 
 void log_write(LogLevel level, const char *file, int line, const char *fmt, ...);
+
+const char *log_level_to_str(LogLevel level);
 
 #define LOG_DEBUG(fmt, ...) log_write(LOG_LEVEL_DEBUG, __FILE__, __LINE__, fmt, ##__VA_ARGS__)
 #define LOG_INFO(fmt, ...)  log_write(LOG_LEVEL_INFO,  __FILE__, __LINE__, fmt, ##__VA_ARGS__)
@@ -32,6 +35,6 @@ void log_write(LogLevel level, const char *file, int line, const char *fmt, ...)
 
 int log_init(void);
 
-void log_deinit(void);
+void log_destroy(void);
 
 #endif // !LOG_H

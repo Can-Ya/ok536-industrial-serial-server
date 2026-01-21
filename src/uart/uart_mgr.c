@@ -258,7 +258,7 @@ static int parse_uart_config(const char* config_path, UartConfig* uart_configs, 
 
 parse_done:
     if (parser.error != YAML_NO_ERROR) {
-        LOG_ERROR("YAML parse error: %s\n", parser.problem);
+        LOG_ERROR("YAML parse error: %s", parser.problem);
         ret = -1;
     } else {
         ret = uart_idx;
@@ -293,7 +293,7 @@ static void uart_read_handler(UartMgr* mgr, int fd)
     if(len > 0) {
         buf[len] = '\0';
         uart->rx_bytes += len;
-        LOG_INFO("%s Read %ld bytes: %s\n", uart->config.dev_path, len, buf);
+        LOG_INFO("%s Read %ld bytes: %s", uart->config.dev_path, len, buf);
     } else if (len < 0 && errno != EAGAIN) {
         uart->err_count++;
         LOG_ERROR("UART read error");
@@ -326,7 +326,7 @@ UartMgr* uart_mgr_init(const char* config_path)
     for (int i = 0; i < uart_count; i++) {
         int idx = temp_configs[i].idx;
         if (idx < 0 || idx >= MAX_UART_NUM) {
-            LOG_WARN("Invalid uart idx: %d, skip\n", idx);
+            LOG_WARN("Invalid uart idx: %d, skip", idx);
             continue;
         }
         mgr->uarts[idx].config = temp_configs[i];
@@ -388,6 +388,8 @@ void uart_mgr_destroy(UartMgr* mgr)
     if(mgr->epoll_fd > 0) {
         close(mgr->epoll_fd);
     }
+
+    LOG_INFO("Uart manager destroyed");
 
     free(mgr);
 }

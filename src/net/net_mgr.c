@@ -353,7 +353,7 @@ void net_mgr_destroy(NetMgr* mgr)
         pthread_join(mgr->clean_thread, NULL);
     }
 
-    LOG_INFO("NetMge has destroyed");
+    LOG_INFO("Net manager destroyed");
 
     pthread_mutex_destroy(&mgr->mutex);
     free(mgr);

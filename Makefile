@@ -4,8 +4,8 @@ include ../../../makefile_cfg
 
 all: $(TARGET)
 
-$(TARGET):main.c
-	$(CC) main.c -o $(TARGET) -lpthread -lrt
+$(TARGET):main.c net/net_mgr.c uart/uart_mgr.c modbus/modbus_core.c log/log.c cli/cli_mgr.c
+	$(CC) main.c net/net_mgr.c uart/uart_mgr.c modbus/modbus_core.c log/log.c cli/cli_mgr.c  -g -o serial_server -lpthread -lrt -lyaml -lreadline
 	@echo "generate $(TARGET) success!!!"
 	@cp -f $(TARGET) $(CMD_PATH)
 	@echo -e '\e[1;33m cp -f $(TARGET) $(CMD_PATH) \e[0m'
