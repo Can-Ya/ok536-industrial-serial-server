@@ -40,9 +40,9 @@
 - 辅助硬件：PC机（用于交叉编译、调试）、串口调试助手、网络调试助手、Modbus RTU从站设备
 
 ### 软件
-- 开发环境：Ubuntu 20.04（交叉编译主机）、ARM-Linux-GCC 7.5.0交叉编译器
-- 系统：OK536开发板适配Linux 4.19内核
-- 开发语言：C
+- 开发环境：Ubuntu 20.04（交叉编译主机）、aarch64-none-linux-gnu-gcc交叉编译器
+- 系统：OK536开发板适配 Bootloader版本：u-boot-2023.0、内核版本：linux-5.10.198、开发板QT版本：qt5.15.8
+- 开发语言：C语言、DTSL语言、Make语言
 - 核心技术：epoll/多线程并发、socket网络编程、Modbus RTU协议解析、Linux命令行编程
 - 调试工具：minicom、（串口调试）、SerialStudio（网络抓包）、gdb（远程调试）
 
