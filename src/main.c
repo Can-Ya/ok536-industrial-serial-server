@@ -170,7 +170,6 @@ void epoll_handle_uart_events() {
 int main(int argc, char *argv[])
 {
     if (log_init() != 0) {
-        // 日志初始化失败的降级提示（可选）
         fprintf(stderr, "Log system init failed! Exit...\n");
         return -1;
     }
