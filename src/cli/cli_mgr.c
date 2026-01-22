@@ -1,12 +1,22 @@
 #include "cli_mgr.h"
 
+/*
 static char* cli_command_generator(const char* text, int state);
 static char** cli_command_completion(const char* text, int start, int end);
+*/
 
+//brief List of supported CLI commands (NULL-terminated)
 static const char* cli_cmd_list[] = {
     "uart_status", "uart_set", "net_status", "log_level", "help", "exit", NULL
-};
+};  
 
+/**
+ * @brief Split input string into argument array
+ * @param input: Input command string (will be modified by strtok)
+ * @param argv: Output argument array
+ * @param max_argc: Maximum number of arguments (including NULL terminator)
+ * @return Number of parsed arguments on success, -1 on invalid input
+ */
 static int cli_split_args(char* input, char** argv, int max_argc)
 {
     if (!input || !argv || max_argc <= 0) return -1;
@@ -21,6 +31,12 @@ static int cli_split_args(char* input, char** argv, int max_argc)
     return argc;
 }
 
+/**
+ * @brief Parse command type from argument array
+ * @param argc: Number of arguments
+ * @param argv: Argument array
+ * @return Corresponding CliCmdType, CMD_UNKNOWN if command not recognized
+ */
 static CliCmdType cli_parse_cmd(int argc, char** argv)
 {
     if (argc < 1) return CMD_UNKNOWN;
@@ -35,6 +51,11 @@ static CliCmdType cli_parse_cmd(int argc, char** argv)
     return CMD_UNKNOWN;
 }
 
+/**
+ * @brief Execute uart_status command
+ * @param argc: Number of arguments
+ * @param argv: Argument array (argv[1] = UART index)
+ */
 static void cli_exec_uart_status(int argc, char** argv)
 {
     if (argc < 2) {
@@ -66,11 +87,116 @@ static void cli_exec_uart_status(int argc, char** argv)
     printf("==================================\n");
 }
 
+/**
+ * @brief Execute uart_set command (to be implemented)
+ * @param argc: Number of arguments
+ * @param argv: Argument array
+ */
 static void cli_exec_uart_set(int argc, char** argv)
 {
+   if (argc < 3 || strcmp(argv[1], "-i") != 0) {
+        LOG_WARN("Invalid usage!");
+        LOG_WARN("Usage: uart_set -i <uart_idx> [-b <baud>] [-d <databit>] [-s <stopbit>]");
+        LOG_WARN("                [-p <parity(N/E/O)>] [-e <enable(0/1)>] [-m <modbus_en(0/1)>]");
+        LOG_WARN("Example: uart_set -i 0 -b 115200 -p N -e 1 -m 1");
+        return;
+    }
 
+    int uart_idx = atoi(argv[2]);
+    if (uart_idx < 0 || uart_idx >= MAX_UART_NUM) {
+        LOG_WARN("Invalid uart_idx! Must be 0~%d", MAX_UART_NUM - 1);
+        return;
+    }
+
+    UartDev uart_dev;
+    uart_mgr_get_status(g_uart_mgr, uart_idx, &uart_dev);
+    if (&uart_dev == 0) {
+        LOG_ERROR("Failed to get UART %d status", uart_idx);
+        return;
+    }
+    UartConfig new_config = uart_dev.config;
+
+    for (int i = 3; i < argc; i += 2) {
+        if (i + 1 >= argc) {
+            LOG_WARN("Missing value for option: %s", argv[i]);
+            return;
+        }
+
+        if (strcmp(argv[i], "-b") == 0) { 
+            int baud = atoi(argv[i+1]);
+
+            switch (baud) {
+                case 9600: case 19200: case 38400: case 48000: case 57600:
+                case 115200: case 230400: case 460800: case 921600:
+                    new_config.baudrate = baud;
+                    break;
+                default:
+                    LOG_WARN("Invalid baudrate! Supported: 9600/19200/38400/57600/115200/230400/460800/921600");
+                    return;
+            }
+        }  else if (strcmp(argv[i], "-d") == 0) {
+            int databit = atoi(argv[i+1]);
+            if (databit < 5 || databit > 8) {
+                LOG_WARN("Invalid databit! Must be 5~8");
+                return;
+            }
+            new_config.databit = databit;
+        } else if (strcmp(argv[i], "-s") == 0) { 
+            int stopbit = atoi(argv[i+1]);
+            if (stopbit != 1 && stopbit != 2) {
+                LOG_WARN("Invalid stopbit! Must be 1 or 2");
+                return;
+            }
+            new_config.stopbit = stopbit;
+        } else if (strcmp(argv[i], "-p") == 0) {
+            char parity = toupper(argv[i+1][0]);
+            if (parity != 'N' && parity != 'E' && parity != 'O') {
+                LOG_WARN("Invalid parity! Must be N (None)/E (Even)/O (Odd)");
+                return;
+            }
+            new_config.parity = parity;
+        } else if (strcmp(argv[i], "-e") == 0) {
+            int enable = atoi(argv[i+1]);
+            if (enable != 0 && enable != 1) {
+                LOG_WARN("Invalid enable! Must be 0 (disable) or 1 (enable)");
+                return;
+            }
+            new_config.enable = (enable == 1) ? 1 : 0;
+        } else if (strcmp(argv[i], "-m") == 0) { 
+            int modbus_en = atoi(argv[i+1]);
+            if (modbus_en != 0 && modbus_en != 1) {
+                LOG_WARN("Invalid modbus enable! Must be 0 (disable) or 1 (enable)");
+                return;
+            }
+            new_config.modbus_enable = (modbus_en == 1) ? 1 : 0;
+        } else { 
+            LOG_WARN("Unknown option: %s", argv[i]);
+            return;
+        }
+    }
+
+    if (uart_mgr_set_config(g_uart_mgr, uart_idx, &new_config) != 0) {
+        LOG_ERROR("Failed to set UART %d configuration", uart_idx);
+        return;
+    }
+
+    LOG_INFO("UART %d configuration updated successfully!", uart_idx);
+    printf("===== Updated UART %d Config =====\n", uart_idx);
+    printf("Enable:      %s\n", new_config.enable ? "YES" : "NO");
+    printf("Modbus Enable: %s\n", new_config.modbus_enable ? "YES" : "NO");
+    printf("Baudrate:    %d\n", new_config.baudrate);
+    printf("Databit:     %d\n", new_config.databit);
+    printf("Stopbit:     %d\n", new_config.stopbit);
+    printf("Parity:      %c\n", new_config.parity);
+    printf("Flow Ctrl:   %d\n", new_config.flow_ctrl); // 保持原有值
+    printf("==================================\n");
 }
 
+/**
+ * @brief Execute log_level command
+ * @param argc: Number of arguments
+ * @param argv: Argument array (argv[1] = log level string)
+ */
 static void cli_exec_log_level(int argc, char** argv)
 {
     if (argc < 2) {
@@ -93,6 +219,11 @@ static void cli_exec_log_level(int argc, char** argv)
     LOG_INFO("Log level set to %s", log_level_to_str(level));
 }
 
+/**
+ * @brief Execute net_status command
+ * @param argc: Number of arguments
+ * @param argv: Argument array
+ */
 static void cli_exec_net_status(int argc, char** argv)
 {
     if (!g_net_mgr) {
@@ -124,6 +255,9 @@ static void cli_exec_net_status(int argc, char** argv)
     printf("==================================\n");
 }
 
+/**
+ * @brief Execute help command (show usage of all supported commands)
+ */
 static void cli_exec_help(void)
 {
     printf("===== Serial Server CLI Help =====\n");
@@ -137,11 +271,19 @@ static void cli_exec_help(void)
     printf("==================================\n");
 }
 
+/**
+ * @brief Execute exit command (set g_running to 0 to exit CLI loop)
+ */
 static void cli_exec_exit(void)
 {
     g_running = 0;
 }
 
+/**
+ * @brief Dispatch and execute parsed CLI command
+ * @param argc: Number of arguments
+ * @param argv: Argument array
+ */
 static void cli_exec_cmd(int argc, char** argv)
 {
     CliCmdType cmd = cli_parse_cmd(argc, argv);
@@ -170,12 +312,25 @@ static void cli_exec_cmd(int argc, char** argv)
     }
 }
 
+/**
+ * @brief CLI command completion callback for readline
+ * @param text: Input text to complete
+ * @param start: Start index of text in input line
+ * @param end: End index of text in input line
+ * @return Array of matched command strings (NULL-terminated), NULL on failure
+ */
 static char** cli_command_completion(const char* text, int start, int end)
 {
     rl_attempted_completion_over = 1;
     return rl_completion_matches(text, cli_command_generator);
 }
 
+/**
+ * @brief Generate matched CLI commands for auto-completion
+ * @param text: Input text to match against command list
+ * @param state: State flag for readline completion (0 = first call, non-0 = subsequent calls)
+ * @return Pointer to matched command string (strdup'd), NULL if no more matches
+ */
 static char* cli_command_generator(const char* text, int state)
 {
     static int list_idx, text_len;
@@ -195,6 +350,13 @@ static char* cli_command_generator(const char* text, int state)
     return NULL;
 }
 
+/**
+ * @brief Initialize CLI manager
+ *
+ * Initializes readline library, sets up command completion callback,
+ * and initializes command history (limit to 100 entries).
+ * @return 0 on success, negative value on failure
+ */
 int cli_mgr_init(void)
 {
     rl_initialize();
@@ -206,6 +368,15 @@ int cli_mgr_init(void)
     return 0;
 }
 
+/**
+ * @brief CLI main loop thread function
+ *
+ * Continuously prompts for user input, trims whitespace, skips empty input,
+ * adds valid input to history, parses arguments, and executes commands.
+ * Exits when g_running is 0 or readline returns NULL.
+ * @param arg: Unused thread argument
+ * @return NULL on exit
+ */
 void* cli_mgr_loop(void* arg)
 {
     char* input;
@@ -237,6 +408,12 @@ void* cli_mgr_loop(void* arg)
     return NULL;
 }
 
+/**
+ * @brief Destroy CLI manager
+ *
+ * Clears command history, cleans up readline resources after signal,
+ * and logs destruction completion.
+ */
 void cli_mgr_destroy(void)
 {
     rl_clear_history();
